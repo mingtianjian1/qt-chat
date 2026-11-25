@@ -78,11 +78,23 @@ CMake 与 Ninja 用 Qt 安装器自带的那份（`C:\Qt\Tools\CMake_64\bin`、`
 
 运行 `build/server/chatserver.exe` 与 `build/client/chatclient.exe`。部署到其它机器时用 `windeployqt` 带上 Qt 运行库。
 
+## 运行
+
+先起服务端，再起两个客户端：
+
+```bat
+build\server\chatserver.exe
+build\client\chatclient.exe
+build\client\chatclient.exe
+```
+
+客户端填昵称、点「连接」，发一行字，两个窗口都会显示 `昵称: 内容`。服务端日志会打出连接数、帧类型与 payload 长度。
+
 ## Roadmap
 
 | 阶段 | 内容 | 状态 |
 |---|---|---|
-| v0 | 服务端监听、客户端连接、单条文字收发 | 开发中 |
+| v0 | 服务端监听、客户端连接、单条文字收发 | 已完成 |
 | v1 | 昵称登录、在线列表、广播、心跳、断线重连 | 计划 |
 | v1.5 | SQLite 历史记录、分页加载 | 计划 |
 | v2 | 文件分块传输、进度、取消；网络层移入工作线程 | 计划 |

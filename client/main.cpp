@@ -1,3 +1,5 @@
+#include "chatclient.h"
+
 #include <QApplication>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -8,16 +10,17 @@
 #include <QVBoxLayout>
 #include <QWidget>
 
-// v0 骨架：界面先出来，网络两处留成 TODO。
-// 下一步：加 ChatClient（QTcpSocket + 读缓冲 + proto::decode），
-// 连接/断开/收到帧都通过信号回给这个窗口，界面层不碰 QByteArray。
 int main(int argc, char *argv[]) {
     QApplication app(argc, argv);
 
+    ChatClient client;
+
     QWidget window;
     window.setWindowTitle("qt-chat");
-    window.resize(560, 460);
+    window.resize(620, 480);
 
+    auto *nickname = new QLineEdit("guest", &window);
+    nickname->setMaximumWidth(100);
     auto *host = new QLineEdit("127.0.0.1", &window);
     auto *port = new QSpinBox(&window);
     port->setRange(1, 65535);
@@ -32,6 +35,8 @@ int main(int argc, char *argv[]) {
     auto *sendButton = new QPushButton("发送", &window);
 
     auto *connectRow = new QHBoxLayout;
+    connectRow->addWidget(new QLabel("昵称", &window));
+    connectRow->addWidget(nickname);
     connectRow->addWidget(new QLabel("服务器", &window));
     connectRow->addWidget(host);
     connectRow->addWidget(port);
@@ -46,15 +51,37 @@ int main(int argc, char *argv[]) {
     root->addWidget(log);
     root->addLayout(sendRow);
 
-    QObject::connect(connectButton, &QPushButton::clicked, &window, [=] {
-        log->append("TODO(v0): 用 QTcpSocket 连接 " + host->text()
-                    + ":" + QString::number(port->value()));
+    QObject::connect(&client, &ChatClient::connected, &window, [&] {
+        log->append("已连接 " + host->text() + ":" + QString::number(port->value()));
+        connectButton->setText("断开");
     });
-    QObject::connect(sendButton, &QPushButton::clicked, &window, [=] {
+    QObject::connect(&client, &ChatClient::disconnected, &window, [&] {
+        log->append("已断开");
+        connectButton->setText("连接");
+    });
+    QObject::connect(&client, &ChatClient::textReceived, &window,
+                     [&](const QString &name, const QString &text) {
+                         log->append(name + ": " + text);
+                     });
+    QObject::connect(&client, &ChatClient::errorOccurred, &window,
+                     [&](const QString &text) { log->append("错误: " + text); });
+
+    QObject::connect(connectButton, &QPushButton::clicked, &window, [&] {
+        if (client.isConnected()) {
+            client.disconnectFromServer();
+        } else {
+            client.connectToServer(host->text().trimmed(), quint16(port->value()));
+        }
+    });
+    QObject::connect(sendButton, &QPushButton::clicked, &window, [&] {
+        if (!client.isConnected()) {
+            log->append("还没连接");
+            return;
+        }
         if (message->text().isEmpty()) {
             return;
         }
-        log->append("TODO(v0): proto::encode(ChatText) 后 write " + message->text());
+        client.sendText(nickname->text(), message->text());
         message->clear();
     });
     QObject::connect(message, &QLineEdit::returnPressed, sendButton, &QPushButton::click);
