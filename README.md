@@ -2,9 +2,15 @@
 
 [![build](https://github.com/mingtianjian1/qt-chat/actions/workflows/build.yml/badge.svg)](https://github.com/mingtianjian1/qt-chat/actions/workflows/build.yml)
 
-Qt 6 / C++17 的局域网聊天与文件传输工具，C/S 架构：服务端无状态中转，客户端是 GUI、聊天记录存本地 SQLite。
+Qt 6 / C++17 的局域网聊天与文件传输工具。C/S 架构：服务端无状态中转，客户端负责界面与本地历史（SQLite）。
 
-这不是"再做一个微信"，而是练出五个能讲 20 分钟的面试故事：**协议怎么设计、粘包怎么处理、线程怎么挪、背压怎么做、程序怎么打包**。
+## 功能
+
+- 文字消息：广播与私聊
+- 在线列表、上线下线通知
+- 心跳保活、断线重连
+- 文件分块传输、进度显示、中途取消
+- 本地聊天记录（SQLite）、分页加载
 
 ## 架构
 
@@ -19,7 +25,7 @@ Qt 6 / C++17 的局域网聊天与文件传输工具，C/S 架构：服务端无
 | `chatserver` | 监听、在线表、登录、广播文字、转发文件块、心跳超时清理 | 不存历史、不做离线消息、不落库 |
 | `chatclient` | 界面、本地昵称、聊天记录落库、文件选择与进度、重连 | 不监听端口、不承担服务端逻辑 |
 
-线程模型分两段：**v1 全部跑 GUI 线程**（`QTcpSocket` 本身异步，低负载够用）；**v2 把网络层与文件 IO 整体 `moveToThread`**，结果用 QueuedConnection 回传。改造前后要有对比数字，否则故事不成立。
+线程模型：v1 全部运行在 GUI 线程（`QTcpSocket` 本身异步，低负载场景足够）；v2 将网络层与文件 IO 整体 `moveToThread`，结果通过 QueuedConnection 回传界面。两个版本都保留响应时间与 CPU 占用的对比数据。
 
 ## 协议
 
@@ -30,7 +36,7 @@ Qt 6 / C++17 的局域网聊天与文件传输工具，C/S 架构：服务端无
 | 0 | 4 | `magic` | 固定 `0x43484154`（`'CHAT'`），错则流已错位，断开 |
 | 4 | 4 | `payloadLen` | payload 字节数，上限 1 MB，超限拒收并断开 |
 | 8 | 2 | `type` | 消息类型 |
-| 10 | 2 | `flags` | 预留，v1 固定 0 |
+| 10 | 2 | `flags` | 预留，固定 0 |
 | 12 | N | `payload` | 文字类为 UTF-8 JSON，文件块为二进制 |
 
 | 类型 | 方向 | payload |
@@ -44,7 +50,7 @@ Qt 6 / C++17 的局域网聊天与文件传输工具，C/S 架构：服务端无
 | `Ping` / `Pong` | 双向 | 空 |
 | `Error` | S→C | JSON：`code, msg` |
 
-接收侧必须有缓冲循环：半包等待、多包循环、magic 校验、长度上限。三个保护缺一个都会在现场翻车——见 `common/protocol.cpp`。
+接收侧用缓冲循环解析：半包等待、多包循环、magic 校验、长度上限，实现在 `common/protocol.cpp`。
 
 ## 目录
 
@@ -68,17 +74,18 @@ cmake -S . -B build -G Ninja -DCMAKE_PREFIX_PATH=C:/Qt/6.9.3/mingw_64
 cmake --build build
 ```
 
-运行 `build/server/chatserver.exe` 与 `build/client/chatclient.exe`。换台机器跑，需要 `windeployqt` 带上 Qt 的 DLL。
+运行 `build/server/chatserver.exe` 与 `build/client/chatclient.exe`。部署到其它机器时用 `windeployqt` 带上 Qt 运行库。
 
-## 进度
+## Roadmap
 
-- [x] 仓库、CMake 骨架、12 字节帧编解码（`common/`）
-- [ ] **v0 骨架**（3h）：服务端监听、客户端连上、互发一行字；判据是改一个字对面 1 秒内收到、日志能看到帧类型
-- [ ] **v1 可用**（8h）：昵称登录、在线列表、广播、上下线通知、心跳、断线重连
-- [ ] **v1.5 本地库**（4h）：SQLite 存历史、分页、重启后还在
-- [ ] **v2 文件**（10h）：选文件/拖拽、分块、进度、取消；网络层进工作线程
-- [ ] **v3 收口**（5h）：ASan 零报错、GitHub Actions、windeployqt、README + 架构图
+| 阶段 | 内容 | 状态 |
+|---|---|---|
+| v0 | 服务端监听、客户端连接、单条文字收发 | 开发中 |
+| v1 | 昵称登录、在线列表、广播、心跳、断线重连 | 计划 |
+| v1.5 | SQLite 历史记录、分页加载 | 计划 |
+| v2 | 文件分块传输、进度、取消；网络层移入工作线程 | 计划 |
+| v3 | ASan 全流程、GitHub Actions、`windeployqt` 打包 | 计划 |
 
 ## 不做
 
-注册登录、服务端数据库与离线消息、群聊、富文本/表情、音视频、NAT 打洞、TLS、断点续传。理由统一：不加新故事，只加工作量。
+注册登录、服务端数据库与离线消息、群聊、富文本与表情、音视频、NAT 打洞、TLS、断点续传。这些功能与项目目标无关，不纳入范围。
