@@ -66,15 +66,23 @@ qt-chat/
 
 ## 构建
 
-环境：Windows + Qt 6.9.3 MinGW 64-bit + CMake ≥ 3.16 + Ninja。
+依赖：
+
+- Qt 6（Widgets、Network 模块）
+- CMake ≥ 3.16
+- Ninja
+- 与 Qt 配套的 C++17 编译器（Windows 下为 MinGW 64-bit）
+
+Windows 上确保 Qt 的 `bin` 目录、CMake、Ninja 都在 `PATH` 里（后两者 Qt 安装器自带，位于 Qt 安装目录的 `Tools\CMake_64\bin` 与 `Tools\Ninja`），然后：
 
 ```bat
-set PATH=C:\Qt\6.9.3\mingw_64\bin;C:\Qt\Tools\mingw1310_64\bin;C:\Qt\Tools\Ninja;C:\Qt\Tools\CMake_64\bin;%PATH%
-cmake -S . -B build -G Ninja -DCMAKE_PREFIX_PATH=C:/Qt/6.9.3/mingw_64
+cmake -S . -B build -G Ninja -DCMAKE_PREFIX_PATH=<Qt 安装目录>/<版本>/mingw_64
 cmake --build build
 ```
 
-CMake 与 Ninja 用 Qt 安装器自带的那份（`C:\Qt\Tools\CMake_64\bin`、`C:\Qt\Tools\Ninja`），不需要另装。也可以直接用 Qt Creator 打开 `CMakeLists.txt` 构建，它自带这两样。
+把 `CMAKE_PREFIX_PATH` 设为环境变量后，`-D` 参数可以省掉。Linux / macOS 装好系统 Qt 6 后换成对应的 Qt 前缀即可。
+
+也可以直接用 Qt Creator 打开 `CMakeLists.txt` 构建，它自带 CMake 与 Ninja。
 
 运行 `build/server/chatserver.exe` 与 `build/client/chatclient.exe`。部署到其它机器时用 `windeployqt` 带上 Qt 运行库。
 
