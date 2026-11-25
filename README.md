@@ -69,10 +69,12 @@ qt-chat/
 环境：Windows + Qt 6.9.3 MinGW 64-bit + CMake ≥ 3.16 + Ninja。
 
 ```bat
-set PATH=C:\Qt\6.9.3\mingw_64\bin;C:\Qt\Tools\mingw1310_64\bin;C:\Qt\Tools\Ninja;%PATH%
+set PATH=C:\Qt\6.9.3\mingw_64\bin;C:\Qt\Tools\mingw1310_64\bin;C:\Qt\Tools\Ninja;C:\Qt\Tools\CMake_64\bin;%PATH%
 cmake -S . -B build -G Ninja -DCMAKE_PREFIX_PATH=C:/Qt/6.9.3/mingw_64
 cmake --build build
 ```
+
+CMake 与 Ninja 用 Qt 安装器自带的那份（`C:\Qt\Tools\CMake_64\bin`、`C:\Qt\Tools\Ninja`），不需要另装。也可以直接用 Qt Creator 打开 `CMakeLists.txt` 构建，它自带这两样。
 
 运行 `build/server/chatserver.exe` 与 `build/client/chatclient.exe`。部署到其它机器时用 `windeployqt` 带上 Qt 运行库。
 
