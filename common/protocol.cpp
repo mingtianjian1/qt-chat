@@ -1,6 +1,7 @@
 #include "protocol.h"
 
 #include <QDataStream>
+#include <QIODevice>
 
 namespace proto {
 
