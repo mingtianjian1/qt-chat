@@ -127,20 +127,49 @@ void ChatServer::handleChat(ClientSession *session, const QByteArray &payload) {
         return;
     }
 
-    const QString text = QJsonDocument::fromJson(payload).object().value("text").toString();
+    const QJsonObject incoming = QJsonDocument::fromJson(payload).object();
+    const QString text = incoming.value("text").toString();
     if (text.isEmpty()) {
         return;
     }
+    const qint64 to = qint64(incoming.value("to").toInteger());   // 0 = 广播
 
     QJsonObject message;
     message["from"] = qint64(session->id());
     message["fromName"] = session->name();
-    message["to"] = 0;                                 // 0 = 广播
+    message["to"] = to;
     message["ts"] = QDateTime::currentMSecsSinceEpoch();
     message["text"] = text;
 
-    qInfo() << "session" << session->id() << "chat" << text.size() << "chars";
-    broadcast(proto::encode(proto::Type::ChatText, toJson(message)));
+    if (to == 0) {
+        qInfo() << "session" << session->id() << "chat" << text.size() << "chars (broadcast)";
+        broadcast(proto::encode(proto::Type::ChatText, toJson(message)));
+        return;
+    }
+
+    // 私聊：只投递给目标，不回显给发送方（发送方已经本地显示）
+    ClientSession *target = findById(to);
+    if (!target || !target->isLoggedIn()) {
+        QJsonObject error;
+        error["code"] = "user_offline";
+        error["msg"] = "对方不在线";
+        session->sendFrame(proto::Type::Error, toJson(error));
+        return;
+    }
+
+    message["toName"] = target->name();
+    target->sendRaw(proto::encode(proto::Type::ChatText, toJson(message)));
+    qInfo() << "session" << session->id() << "chat" << text.size()
+            << "chars (private to" << target->name() << ")";
+}
+
+ClientSession *ChatServer::findById(qint64 id) const {
+    for (ClientSession *session : m_sessions) {
+        if (qint64(session->id()) == id) {
+            return session;
+        }
+    }
+    return nullptr;
 }
 
 void ChatServer::onClosed(ClientSession *session) {

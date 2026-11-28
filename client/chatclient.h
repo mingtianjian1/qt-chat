@@ -1,12 +1,17 @@
 #pragma once
 
 #include <QByteArray>
+#include <QList>
 #include <QObject>
 #include <QString>
-#include <QStringList>
 
 class QTcpSocket;
 class QTimer;
+
+struct ChatUser {
+    qint64 id = 0;
+    QString name;
+};
 
 // 客户端传输层：连接、登录、心跳、断线重连、拆帧。
 // 不碰界面，只把结果通过信号抛出去。
@@ -21,7 +26,8 @@ public:
     // 用户意图：主动断开（不再重连）
     void disconnectFromServer();
 
-    void sendText(const QString &text);
+    // to = 0 表示广播，否则发给指定用户 id
+    void sendText(const QString &text, qint64 to = 0);
     bool isConnected() const;
     bool isActive() const { return m_wantConnected; }
 
@@ -30,10 +36,10 @@ signals:
     void disconnected();
     void reconnecting(int attempt, int delayMs);
     void loginResult(bool ok, qint64 selfId, const QString &text);
-    void userList(const QStringList &names);
-    void userJoined(const QString &name);
-    void userLeft(const QString &name);
-    void textReceived(const QString &name, const QString &text);
+    void userList(const QList<ChatUser> &users);
+    void userJoined(const ChatUser &user);
+    void userLeft(qint64 id, const QString &name);
+    void textReceived(const QString &name, const QString &text, bool isPrivate);
     void errorOccurred(const QString &message);
 
 private slots:

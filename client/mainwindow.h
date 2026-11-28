@@ -1,10 +1,10 @@
 #pragma once
 
+#include "chatclient.h"
+
 #include <QString>
-#include <QStringList>
 #include <QWidget>
 
-class ChatClient;
 class HistoryStore;
 class QLabel;
 class QLineEdit;
@@ -29,15 +29,16 @@ private slots:
     void onConnectClicked();
     void onSendClicked();
     void onLoadEarlierClicked();
+    void onUserSelectionChanged();
 
     void onConnected();
     void onDisconnected();
     void onReconnecting(int attempt, int delayMs);
     void onLoginResult(bool ok, qint64 selfId, const QString &text);
-    void onUserList(const QStringList &names);
-    void onUserJoined(const QString &name);
-    void onUserLeft(const QString &name);
-    void onTextReceived(const QString &name, const QString &text);
+    void onUserList(const QList<ChatUser> &users);
+    void onUserJoined(const ChatUser &user);
+    void onUserLeft(qint64 id, const QString &name);
+    void onTextReceived(const QString &name, const QString &text, bool isPrivate);
     void onError(const QString &message);
 
 private:
@@ -47,14 +48,15 @@ private:
 
     void openHistory();
     void loadHistory(const QString &owner);
-    void recordMessage(int direction, const QString &sender, const QString &body);
+    void recordMessage(const QString &peer, int direction,
+                       const QString &sender, const QString &body);
 
     QWidget *createMessageWidget(const ChatMessage &message) const;
     QWidget *createNoticeWidget(const QString &text) const;
     void appendWidget(QWidget *widget);
-    void prependWidget(QWidget *widget);
     void addNotice(const QString &text);
-    void addUserItem(const QString &name);
+    void addUserItem(const ChatUser &user);
+    void updateTargetLabel();
 
     ChatClient *m_client = nullptr;
     HistoryStore *m_history = nullptr;
@@ -70,7 +72,9 @@ private:
     QTextEdit *m_input = nullptr;
     QPushButton *m_sendButton = nullptr;
     QLabel *m_status = nullptr;
+    QLabel *m_targetLabel = nullptr;
 
     QString m_selfName;
+    qint64 m_selfId = 0;
     qint64 m_oldestId = 0;
 };

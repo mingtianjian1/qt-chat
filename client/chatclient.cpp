@@ -125,9 +125,10 @@ void ChatClient::sendLogin(const QString &name) {
     m_socket->write(proto::encode(proto::Type::LoginReq, toJson(request)));
 }
 
-void ChatClient::sendText(const QString &text) {
+void ChatClient::sendText(const QString &text, qint64 to) {
     QJsonObject message;
     message["text"] = text;
+    message["to"] = to;                                // 0 = 广播
     m_socket->write(proto::encode(proto::Type::ChatText, toJson(message)));
 }
 
@@ -169,23 +170,28 @@ void ChatClient::onReadyRead() {
             break;
         }
         case proto::Type::UserList: {
-            QStringList names;
-            const QJsonArray users = message.value("users").toArray();
-            for (const QJsonValue &user : users) {
-                names << user.toObject().value("name").toString();
+            QList<ChatUser> users;
+            const QJsonArray array = message.value("users").toArray();
+            for (const QJsonValue &value : array) {
+                const QJsonObject object = value.toObject();
+                users.append({qint64(object.value("id").toInteger()),
+                              object.value("name").toString()});
             }
-            emit userList(names);
+            emit userList(users);
             break;
         }
         case proto::Type::UserJoin:
-            emit userJoined(message.value("name").toString());
+            emit userJoined({qint64(message.value("id").toInteger()),
+                             message.value("name").toString()});
             break;
         case proto::Type::UserLeave:
-            emit userLeft(message.value("name").toString());
+            emit userLeft(qint64(message.value("id").toInteger()),
+                          message.value("name").toString());
             break;
         case proto::Type::ChatText:
             emit textReceived(message.value("fromName").toString(),
-                              message.value("text").toString());
+                              message.value("text").toString(),
+                              message.value("to").toInteger() != 0);
             break;
         case proto::Type::Error:
             emit errorOccurred(message.value("msg").toString());

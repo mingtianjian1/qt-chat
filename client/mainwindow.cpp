@@ -135,13 +135,22 @@ void MainWindow::buildUi() {
                                 "border-radius:4px;font-size:13px;}"
                                 "QPushButton:hover{background:#06ad56;}");
 
+    m_targetLabel = new QLabel("发送给：所有人", this);
+    m_targetLabel->setStyleSheet("color:#666;font-size:12px;");
+
+    auto *inputRow = new QHBoxLayout;
+    inputRow->setContentsMargins(0, 0, 0, 0);
+    inputRow->setSpacing(8);
+    inputRow->addWidget(m_input, 1);
+    inputRow->addWidget(m_sendButton, 0, Qt::AlignBottom);
+
     auto *inputArea = new QWidget(this);
     inputArea->setStyleSheet("background:#f7f7f7;border-top:1px solid #e3e3e3;");
-    auto *inputLayout = new QHBoxLayout(inputArea);
-    inputLayout->setContentsMargins(12, 10, 12, 10);
-    inputLayout->setSpacing(8);
-    inputLayout->addWidget(m_input, 1);
-    inputLayout->addWidget(m_sendButton, 0, Qt::AlignBottom);
+    auto *inputLayout = new QVBoxLayout(inputArea);
+    inputLayout->setContentsMargins(12, 8, 12, 10);
+    inputLayout->setSpacing(6);
+    inputLayout->addWidget(m_targetLabel);
+    inputLayout->addLayout(inputRow);
 
     auto *rightLayout = new QVBoxLayout;
     rightLayout->setContentsMargins(0, 0, 0, 0);
@@ -160,6 +169,8 @@ void MainWindow::buildUi() {
     connect(m_connectButton, &QPushButton::clicked, this, &MainWindow::onConnectClicked);
     connect(m_sendButton, &QPushButton::clicked, this, &MainWindow::onSendClicked);
     connect(m_loadEarlier, &QPushButton::clicked, this, &MainWindow::onLoadEarlierClicked);
+    connect(m_users, &QListWidget::itemSelectionChanged,
+            this, &MainWindow::onUserSelectionChanged);
 }
 
 bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
@@ -190,7 +201,14 @@ QWidget *MainWindow::createMessageWidget(const ChatMessage &message) const {
                                          "font-weight:bold;font-size:14px;")
                               .arg(avatarColor(name)));
 
-    auto *meta = new QLabel(name + "   " + clockText(message.ts), row);
+    QString metaText;
+    if (message.peer != QLatin1String("all")) {
+        metaText = self ? QStringLiteral("我 → %1（私聊）").arg(message.peer)
+                        : QStringLiteral("%1（私聊）").arg(name);
+    } else {
+        metaText = name;
+    }
+    auto *meta = new QLabel(metaText + "   " + clockText(message.ts), row);
     meta->setStyleSheet("color:#999;font-size:11px;");
     meta->setAlignment(self ? Qt::AlignRight : Qt::AlignLeft);
 
@@ -253,24 +271,30 @@ void MainWindow::appendWidget(QWidget *widget) {
     m_messages->scrollToBottom();
 }
 
-void MainWindow::prependWidget(QWidget *widget) {
-    auto *item = new QListWidgetItem;
-    item->setSizeHint(widget->sizeHint());
-    m_messages->insertItem(0, item);
-    m_messages->setItemWidget(item, widget);
-}
-
 void MainWindow::addNotice(const QString &text) {
     appendWidget(createNoticeWidget(text));
 }
 
-void MainWindow::addUserItem(const QString &name) {
-    if (m_users->findItems(name, Qt::MatchExactly).isEmpty()) {
-        m_users->addItem(name);
-        if (name == m_selfName) {
-            m_users->item(m_users->count() - 1)->setText(name + "（我）");
-        }
+void MainWindow::addUserItem(const ChatUser &user) {
+    if (!m_users->findItems(user.name, Qt::MatchExactly).isEmpty()) {
+        return;
     }
+    auto *item = new QListWidgetItem(m_users);
+    item->setText(user.id == m_selfId ? user.name + "（我）" : user.name);
+    item->setData(Qt::UserRole, user.id);
+}
+
+void MainWindow::updateTargetLabel() {
+    QListWidgetItem *item = m_users->currentItem();
+    if (item && item->data(Qt::UserRole).toLongLong() != m_selfId) {
+        m_targetLabel->setText("发送给：" + item->text());
+    } else {
+        m_targetLabel->setText("发送给：所有人");
+    }
+}
+
+void MainWindow::onUserSelectionChanged() {
+    updateTargetLabel();
 }
 
 void MainWindow::openHistory() {
@@ -322,11 +346,12 @@ void MainWindow::onLoadEarlierClicked() {
     m_loadEarlier->setVisible(messages.size() == kPageSize);
 }
 
-void MainWindow::recordMessage(int direction, const QString &sender, const QString &body) {
+void MainWindow::recordMessage(const QString &peer, int direction,
+                               const QString &sender, const QString &body) {
     if (!m_historyReady || m_selfName.isEmpty()) {
         return;
     }
-    m_history->append(m_selfName, QStringLiteral("all"), sender, direction,
+    m_history->append(m_selfName, peer, sender, direction,
                       QDateTime::currentMSecsSinceEpoch(), body);
 }
 
@@ -340,6 +365,7 @@ void MainWindow::setConnectedUi(bool connected) {
     m_nickname->setEnabled(!connected);
     if (!connected) {
         m_users->clear();
+        updateTargetLabel();
     }
 }
 
@@ -370,17 +396,28 @@ void MainWindow::onSendClicked() {
     }
     m_input->clear();
 
+    // 选中了某个在线用户就私聊，否则广播
+    qint64 toId = 0;
+    QString peer = QStringLiteral("all");
+    if (QListWidgetItem *item = m_users->currentItem()) {
+        const qint64 id = item->data(Qt::UserRole).toLongLong();
+        if (id != m_selfId) {
+            toId = id;
+            peer = item->text();
+        }
+    }
+
     ChatMessage message;
     message.owner = m_selfName;
-    message.peer = QStringLiteral("all");
+    message.peer = peer;
     message.sender = m_selfName;
     message.direction = 1;
     message.ts = QDateTime::currentMSecsSinceEpoch();
     message.body = text;
     appendWidget(createMessageWidget(message));
 
-    recordMessage(1, m_selfName, text);
-    m_client->sendText(text);
+    recordMessage(peer, 1, m_selfName, text);
+    m_client->sendText(text, toId);
 }
 
 void MainWindow::onConnected() {
@@ -406,12 +443,13 @@ void MainWindow::onReconnecting(int attempt, int delayMs) {
                   .arg(delayMs / 1000.0, 0, 'f', 1));
 }
 
-void MainWindow::onLoginResult(bool ok, qint64, const QString &text) {
+void MainWindow::onLoginResult(bool ok, qint64 selfId, const QString &text) {
     if (!ok) {
         addNotice("登录失败：" + text);
         return;
     }
 
+    m_selfId = selfId;
     if (text != m_selfName) {
         // 换了身份：清屏后加载这个昵称自己的历史
         m_selfName = text;
@@ -426,39 +464,42 @@ void MainWindow::onLoginResult(bool ok, qint64, const QString &text) {
     addNotice("登录成功：" + text);
 }
 
-void MainWindow::onUserList(const QStringList &names) {
+void MainWindow::onUserList(const QList<ChatUser> &users) {
     m_users->clear();
-    for (const QString &name : names) {
-        addUserItem(name);
+    for (const ChatUser &user : users) {
+        addUserItem(user);
     }
+    updateTargetLabel();
 }
 
-void MainWindow::onUserJoined(const QString &name) {
-    addUserItem(name);
+void MainWindow::onUserJoined(const ChatUser &user) {
+    addUserItem(user);
 }
 
-void MainWindow::onUserLeft(const QString &name) {
-    const auto items = m_users->findItems(name, Qt::MatchExactly);
-    for (QListWidgetItem *item : items) {
-        delete m_users->takeItem(m_users->row(item));
+void MainWindow::onUserLeft(qint64 id, const QString &) {
+    for (int i = m_users->count() - 1; i >= 0; --i) {
+        if (m_users->item(i)->data(Qt::UserRole).toLongLong() == id) {
+            delete m_users->takeItem(i);
+        }
     }
+    updateTargetLabel();
 }
 
-void MainWindow::onTextReceived(const QString &name, const QString &text) {
+void MainWindow::onTextReceived(const QString &name, const QString &text, bool isPrivate) {
     if (name == m_selfName) {
         return;                                        // 自己发的已经本地显示过
     }
 
     ChatMessage message;
     message.owner = m_selfName;
-    message.peer = QStringLiteral("all");
+    message.peer = isPrivate ? name : QStringLiteral("all");
     message.sender = name;
     message.direction = 0;
     message.ts = QDateTime::currentMSecsSinceEpoch();
     message.body = text;
     appendWidget(createMessageWidget(message));
 
-    recordMessage(0, name, text);
+    recordMessage(message.peer, 0, name, text);
 }
 
 void MainWindow::onError(const QString &message) {
