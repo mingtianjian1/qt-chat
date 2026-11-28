@@ -1,7 +1,5 @@
 #include "clientsession.h"
 
-#include "protocol.h"
-
 #include <QAbstractSocket>
 #include <QTcpSocket>
 
@@ -16,6 +14,10 @@ void ClientSession::sendRaw(const QByteArray &frame) {
     if (m_socket && m_socket->state() == QAbstractSocket::ConnectedState) {
         m_socket->write(frame);
     }
+}
+
+void ClientSession::sendFrame(proto::Type type, const QByteArray &payload) {
+    sendRaw(proto::encode(type, payload));
 }
 
 void ClientSession::onReadyRead() {

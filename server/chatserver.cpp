@@ -3,8 +3,20 @@
 #include "clientsession.h"
 #include "protocol.h"
 
+#include <QDateTime>
 #include <QDebug>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QTcpSocket>
+
+namespace {
+
+QByteArray toJson(const QJsonObject &object) {
+    return QJsonDocument(object).toJson(QJsonDocument::Compact);
+}
+
+}  // namespace
 
 ChatServer::ChatServer(QObject *parent) : QTcpServer(parent) {}
 
@@ -23,22 +35,102 @@ void ChatServer::incomingConnection(qintptr handle) {
 
     qInfo() << "session" << session->id() << "connected from"
             << socket->peerAddress().toString() << socket->peerPort()
-            << "online:" << m_sessions.size();
+            << "online:" << loggedInCount();
 }
 
 void ChatServer::onFrame(ClientSession *session, int type, const QByteArray &payload) {
     const auto frameType = static_cast<proto::Type>(type);
-    qInfo() << "session" << session->id() << "frame" << proto::typeName(frameType)
-            << "payload" << payload.size() << "bytes";
-
-    if (frameType == proto::Type::ChatText) {
-        broadcast(proto::encode(frameType, payload));   // v0：广播给所有连接（含发送者）
+    switch (frameType) {
+    case proto::Type::LoginReq:
+        handleLogin(session, payload);
+        break;
+    case proto::Type::ChatText:
+        handleChat(session, payload);
+        break;
+    case proto::Type::Ping:
+        session->sendFrame(proto::Type::Pong);
+        break;
+    default:
+        qInfo() << "session" << session->id() << "ignored frame" << proto::typeName(frameType);
+        break;
     }
 }
 
+void ChatServer::handleLogin(ClientSession *session, const QByteArray &payload) {
+    if (session->isLoggedIn()) {
+        return;                                        // 重复登录直接忽略
+    }
+
+    QString name = QJsonDocument::fromJson(payload).object().value("name").toString().trimmed();
+    if (name.isEmpty()) {
+        name = QStringLiteral("user%1").arg(session->id());
+    }
+    session->setName(name);
+    session->setLoggedIn(true);
+
+    QJsonObject ack;
+    ack["ok"] = true;
+    ack["selfId"] = qint64(session->id());
+    ack["name"] = name;
+    session->sendFrame(proto::Type::LoginAck, toJson(ack));
+
+    QJsonArray users;
+    for (ClientSession *other : m_sessions) {
+        if (other->isLoggedIn()) {
+            QJsonObject user;
+            user["id"] = qint64(other->id());
+            user["name"] = other->name();
+            users.append(user);
+        }
+    }
+    QJsonObject list;
+    list["users"] = users;
+    session->sendFrame(proto::Type::UserList, toJson(list));
+
+    QJsonObject join;
+    join["id"] = qint64(session->id());
+    join["name"] = name;
+    broadcastExcept(proto::encode(proto::Type::UserJoin, toJson(join)), session);
+
+    qInfo() << "session" << session->id() << "login as" << name
+            << "online:" << loggedInCount();
+}
+
+void ChatServer::handleChat(ClientSession *session, const QByteArray &payload) {
+    if (!session->isLoggedIn()) {
+        QJsonObject error;
+        error["code"] = "not_logged_in";
+        error["msg"] = "send LoginReq first";
+        session->sendFrame(proto::Type::Error, toJson(error));
+        return;
+    }
+
+    const QString text = QJsonDocument::fromJson(payload).object().value("text").toString();
+    if (text.isEmpty()) {
+        return;
+    }
+
+    QJsonObject message;
+    message["from"] = qint64(session->id());
+    message["fromName"] = session->name();
+    message["to"] = 0;                                 // 0 = 广播
+    message["ts"] = QDateTime::currentMSecsSinceEpoch();
+    message["text"] = text;
+
+    qInfo() << "session" << session->id() << "chat" << text.size() << "chars";
+    broadcast(proto::encode(proto::Type::ChatText, toJson(message)));
+}
+
 void ChatServer::onClosed(ClientSession *session) {
+    if (session->isLoggedIn()) {
+        QJsonObject leave;
+        leave["id"] = qint64(session->id());
+        leave["name"] = session->name();
+        broadcastExcept(proto::encode(proto::Type::UserLeave, toJson(leave)), session);
+    }
+
     m_sessions.remove(session);
-    qInfo() << "session" << session->id() << "closed, online:" << m_sessions.size();
+    qInfo() << "session" << session->id() << "closed, online:" << loggedInCount();
     session->deleteLater();
 }
 
@@ -46,4 +138,22 @@ void ChatServer::broadcast(const QByteArray &frame) {
     for (ClientSession *session : m_sessions) {
         session->sendRaw(frame);
     }
+}
+
+void ChatServer::broadcastExcept(const QByteArray &frame, ClientSession *except) {
+    for (ClientSession *session : m_sessions) {
+        if (session != except) {
+            session->sendRaw(frame);
+        }
+    }
+}
+
+int ChatServer::loggedInCount() const {
+    int count = 0;
+    for (ClientSession *session : m_sessions) {
+        if (session->isLoggedIn()) {
+            ++count;
+        }
+    }
+    return count;
 }

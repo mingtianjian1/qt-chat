@@ -1,7 +1,10 @@
 #pragma once
 
+#include "protocol.h"
+
 #include <QByteArray>
 #include <QObject>
+#include <QString>
 
 class QTcpSocket;
 
@@ -16,7 +19,14 @@ public:
     quint32 id() const { return m_id; }
     QTcpSocket *socket() const { return m_socket; }
 
+    QString name() const { return m_name; }
+    void setName(const QString &name) { m_name = name; }
+
+    bool isLoggedIn() const { return m_loggedIn; }
+    void setLoggedIn(bool loggedIn) { m_loggedIn = loggedIn; }
+
     void sendRaw(const QByteArray &frame);
+    void sendFrame(proto::Type type, const QByteArray &payload = {});
 
 signals:
     void frameReceived(ClientSession *session, int type, const QByteArray &payload);
@@ -30,4 +40,6 @@ private:
     QTcpSocket *m_socket = nullptr;
     QByteArray m_buffer;
     quint32 m_id = 0;
+    QString m_name;
+    bool m_loggedIn = false;
 };
