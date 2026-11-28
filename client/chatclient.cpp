@@ -77,11 +77,14 @@ void ChatClient::onReadyRead() {
 
         const QJsonObject message = QJsonDocument::fromJson(payload).object();
         switch (type) {
-        case proto::Type::LoginAck:
-            m_selfId = qint64(message.value("selfId").toInteger());
-            emit loginResult(message.value("ok").toBool(), m_selfId,
-                             message.value("name").toString());
+        case proto::Type::LoginAck: {
+            const bool ok = message.value("ok").toBool();
+            m_selfId = ok ? qint64(message.value("selfId").toInteger()) : 0;
+            emit loginResult(ok, m_selfId,
+                             ok ? message.value("name").toString()
+                                : message.value("reason").toString());
             break;
+        }
         case proto::Type::UserList: {
             QStringList names;
             const QJsonArray users = message.value("users").toArray();

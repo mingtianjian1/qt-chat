@@ -26,6 +26,7 @@ private:
 
     void broadcast(const QByteArray &frame);
     void broadcastExcept(const QByteArray &frame, ClientSession *except);
+    bool isNameTaken(const QString &name, ClientSession *except) const;
     int loggedInCount() const;
 
     QSet<ClientSession *> m_sessions;

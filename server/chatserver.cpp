@@ -65,6 +65,18 @@ void ChatServer::handleLogin(ClientSession *session, const QByteArray &payload) 
     if (name.isEmpty()) {
         name = QStringLiteral("user%1").arg(session->id());
     }
+
+    if (isNameTaken(name, session)) {
+        QJsonObject rejected;
+        rejected["ok"] = false;
+        rejected["code"] = "name_taken";
+        rejected["reason"] = "昵称已被占用";
+        session->sendFrame(proto::Type::LoginAck, toJson(rejected));
+        qInfo() << "session" << session->id() << "login rejected, name taken:" << name;
+        session->socket()->disconnectFromHost();       // 客户端换一个名字重连
+        return;
+    }
+
     session->setName(name);
     session->setLoggedIn(true);
 
@@ -146,6 +158,15 @@ void ChatServer::broadcastExcept(const QByteArray &frame, ClientSession *except)
             session->sendRaw(frame);
         }
     }
+}
+
+bool ChatServer::isNameTaken(const QString &name, ClientSession *except) const {
+    for (ClientSession *session : m_sessions) {
+        if (session != except && session->isLoggedIn() && session->name() == name) {
+            return true;
+        }
+    }
+    return false;
 }
 
 int ChatServer::loggedInCount() const {
