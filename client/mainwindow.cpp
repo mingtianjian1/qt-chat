@@ -1,19 +1,33 @@
 #include "mainwindow.h"
 
 #include "chatclient.h"
+#include "historystore.h"
 
+#include <QDateTime>
+#include <QDir>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QPushButton>
+#include <QScrollBar>
 #include <QSpinBox>
+#include <QStandardPaths>
+#include <QTextCursor>
 #include <QTextEdit>
 #include <QVBoxLayout>
 
+namespace {
+
+constexpr int kPageSize = 200;   // 每次从库里取多少条
+
+}  // namespace
+
 MainWindow::MainWindow(QWidget *parent) : QWidget(parent) {
     m_client = new ChatClient(this);
+    m_history = new HistoryStore(this);
     buildUi();
+    openHistory();
 
     connect(m_client, &ChatClient::connected, this, &MainWindow::onConnected);
     connect(m_client, &ChatClient::disconnected, this, &MainWindow::onDisconnected);
@@ -41,6 +55,9 @@ void MainWindow::buildUi() {
 
     m_connectButton = new QPushButton("连接", this);
 
+    m_loadEarlier = new QPushButton("加载更早", this);
+    m_loadEarlier->setVisible(false);
+
     m_log = new QTextEdit(this);
     m_log->setReadOnly(true);
 
@@ -66,6 +83,7 @@ void MainWindow::buildUi() {
 
     auto *left = new QVBoxLayout;
     left->addLayout(connectRow);
+    left->addWidget(m_loadEarlier);
     left->addWidget(m_log);
     left->addLayout(sendRow);
 
@@ -79,7 +97,70 @@ void MainWindow::buildUi() {
 
     connect(m_connectButton, &QPushButton::clicked, this, &MainWindow::onConnectClicked);
     connect(m_sendButton, &QPushButton::clicked, this, &MainWindow::onSendClicked);
+    connect(m_loadEarlier, &QPushButton::clicked, this, &MainWindow::onLoadEarlierClicked);
     connect(m_message, &QLineEdit::returnPressed, m_sendButton, &QPushButton::click);
+}
+
+void MainWindow::openHistory() {
+    const QString dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    QDir().mkpath(dir);
+    const QString path = dir + QStringLiteral("/history.db");
+
+    QString error;
+    m_historyReady = m_history->open(path, &error);
+    if (!m_historyReady) {
+        m_log->append("历史记录不可用：" + error);
+        return;
+    }
+    loadHistory();
+}
+
+void MainWindow::loadHistory() {
+    const QList<ChatMessage> messages = m_history->latest(kPageSize);
+    for (const ChatMessage &message : messages) {
+        m_log->append(formatLine(message));
+    }
+    if (!messages.isEmpty()) {
+        m_oldestId = messages.first().id;
+    }
+    m_loadEarlier->setVisible(messages.size() == kPageSize);
+}
+
+void MainWindow::onLoadEarlierClicked() {
+    const QList<ChatMessage> messages = m_history->before(m_oldestId, kPageSize);
+    if (messages.isEmpty()) {
+        m_loadEarlier->setVisible(false);
+        return;
+    }
+
+    QString block;
+    for (const ChatMessage &message : messages) {
+        block += formatLine(message) + '\n';
+    }
+
+    const int scroll = m_log->verticalScrollBar()->value();
+    QTextCursor cursor(m_log->document());
+    cursor.movePosition(QTextCursor::Start);
+    cursor.insertText(block);                          // 老消息插到最上面
+
+    m_oldestId = messages.first().id;
+    m_log->verticalScrollBar()->setValue(scroll + messages.size());
+    m_loadEarlier->setVisible(messages.size() == kPageSize);
+}
+
+void MainWindow::recordMessage(int direction, const QString &sender, const QString &body) {
+    if (!m_historyReady) {
+        return;
+    }
+    m_history->append(QStringLiteral("all"), sender, direction,
+                      QDateTime::currentMSecsSinceEpoch(), body);
+}
+
+QString MainWindow::formatLine(const ChatMessage &message) const {
+    if (message.direction == 1) {
+        return "我: " + message.body;
+    }
+    return message.sender + ": " + message.body;
 }
 
 void MainWindow::setConnectedUi(bool connected) {
@@ -112,8 +193,13 @@ void MainWindow::onSendClicked() {
     if (m_message->text().isEmpty()) {
         return;
     }
-    m_client->sendText(m_message->text());
+
+    const QString text = m_message->text();
     m_message->clear();
+
+    m_log->append("我: " + text);
+    recordMessage(1, QStringLiteral("我"), text);
+    m_client->sendText(text);
 }
 
 void MainWindow::onConnected() {
@@ -137,6 +223,9 @@ void MainWindow::onReconnecting(int attempt, int delayMs) {
 }
 
 void MainWindow::onLoginResult(bool ok, qint64, const QString &text) {
+    if (ok) {
+        m_selfName = text;
+    }
     m_log->append(ok ? "登录成功：" + text : "登录失败：" + text);
 }
 
@@ -159,7 +248,11 @@ void MainWindow::onUserLeft(const QString &name) {
 }
 
 void MainWindow::onTextReceived(const QString &name, const QString &text) {
+    if (name == m_selfName) {
+        return;                                        // 自己发的已本地显示并入库
+    }
     m_log->append(name + ": " + text);
+    recordMessage(0, name, text);
 }
 
 void MainWindow::onError(const QString &message) {

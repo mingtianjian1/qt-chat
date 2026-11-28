@@ -106,6 +106,14 @@ build\client\chatclient.exe
 - 服务端超过 30 秒收不到任何帧就断开该连接，并广播 `UserLeave`。
 - 客户端 25 秒收不到 `Pong` 视为断线，自动重连（1 → 2 → 4 → 8 → 15 秒退避），重连成功后重新登录。
 
+## 历史记录
+
+- 聊天记录存客户端本地 SQLite：Windows 下是 `%APPDATA%\qt-chat\qt-chat\history.db`。
+- 表结构 `messages(id, peer, sender, direction, ts, body)`；`peer` 目前固定 `all`（广播）。
+- 启动只读最近 200 条，顶部「加载更早」按 `id < 上一条` 再取 200 条，不会一次把整库读进内存。
+- 自己发的消息在发送时入库并显示，不等服务端回显。
+- 打包给别人时要带上 `sqldrivers/qsqlite.dll`，否则启动后没有历史记录（Qt 报找不到 QSQLITE 驱动）。
+
 ## Roadmap
 
 | 阶段 | 内容 | 状态 |
@@ -113,7 +121,7 @@ build\client\chatclient.exe
 | v0 | 服务端监听、客户端连接、单条文字收发 | 已完成 |
 | v1 | 昵称登录、在线列表、广播、上下线通知 | 已完成 |
 | v1.1 | 心跳保活、断线重连 | 已完成 |
-| v1.5 | SQLite 历史记录、分页加载 | 计划 |
+| v1.5 | SQLite 历史记录、分页加载 | 已完成 |
 | v2 | 文件分块传输、进度、取消；网络层移入工作线程 | 计划 |
 | v3 | ASan 全流程、GitHub Actions、`windeployqt` 打包 | 计划 |
 
