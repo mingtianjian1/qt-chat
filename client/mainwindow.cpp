@@ -11,6 +11,7 @@
 #include <QListWidget>
 #include <QPushButton>
 #include <QScrollBar>
+#include <QSettings>
 #include <QSpinBox>
 #include <QStandardPaths>
 #include <QTextCursor>
@@ -28,6 +29,9 @@ MainWindow::MainWindow(QWidget *parent) : QWidget(parent) {
     m_history = new HistoryStore(this);
     buildUi();
     openHistory();
+
+    QSettings settings;
+    m_nickname->setText(settings.value("lastName", "guest").toString());
 
     connect(m_client, &ChatClient::connected, this, &MainWindow::onConnected);
     connect(m_client, &ChatClient::disconnected, this, &MainWindow::onDisconnected);
@@ -112,22 +116,20 @@ void MainWindow::openHistory() {
         m_log->append("历史记录不可用：" + error);
         return;
     }
-    loadHistory();
+    m_log->append("未登录。登录后显示该昵称的历史记录。");
 }
 
-void MainWindow::loadHistory() {
-    const QList<ChatMessage> messages = m_history->latest(kPageSize);
+void MainWindow::loadHistory(const QString &owner) {
+    const QList<ChatMessage> messages = m_history->latest(owner, kPageSize);
     for (const ChatMessage &message : messages) {
         m_log->append(formatLine(message));
     }
-    if (!messages.isEmpty()) {
-        m_oldestId = messages.first().id;
-    }
+    m_oldestId = messages.isEmpty() ? 0 : messages.first().id;
     m_loadEarlier->setVisible(messages.size() == kPageSize);
 }
 
 void MainWindow::onLoadEarlierClicked() {
-    const QList<ChatMessage> messages = m_history->before(m_oldestId, kPageSize);
+    const QList<ChatMessage> messages = m_history->before(m_selfName, m_oldestId, kPageSize);
     if (messages.isEmpty()) {
         m_loadEarlier->setVisible(false);
         return;
@@ -149,10 +151,10 @@ void MainWindow::onLoadEarlierClicked() {
 }
 
 void MainWindow::recordMessage(int direction, const QString &sender, const QString &body) {
-    if (!m_historyReady) {
+    if (!m_historyReady || m_selfName.isEmpty()) {
         return;
     }
-    m_history->append(QStringLiteral("all"), sender, direction,
+    m_history->append(m_selfName, QStringLiteral("all"), sender, direction,
                       QDateTime::currentMSecsSinceEpoch(), body);
 }
 
@@ -223,10 +225,23 @@ void MainWindow::onReconnecting(int attempt, int delayMs) {
 }
 
 void MainWindow::onLoginResult(bool ok, qint64, const QString &text) {
-    if (ok) {
-        m_selfName = text;
+    if (!ok) {
+        m_log->append("登录失败：" + text);
+        return;
     }
-    m_log->append(ok ? "登录成功：" + text : "登录失败：" + text);
+
+    if (text != m_selfName) {
+        // 换了身份：旧记录不属于这个昵称，清屏后加载这个昵称自己的历史
+        m_selfName = text;
+        QSettings settings;
+        settings.setValue("lastName", text);
+        if (m_historyReady) {
+            m_history->claimLegacy(text);
+            m_log->clear();
+            loadHistory(text);
+        }
+    }
+    m_log->append("登录成功：" + text);
 }
 
 void MainWindow::onUserList(const QStringList &names) {

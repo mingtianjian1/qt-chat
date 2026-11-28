@@ -109,7 +109,9 @@ build\client\chatclient.exe
 ## 历史记录
 
 - 聊天记录存客户端本地 SQLite：Windows 下是 `%APPDATA%\qt-chat\qt-chat\history.db`。
-- 表结构 `messages(id, peer, sender, direction, ts, body)`；`peer` 目前固定 `all`（广播）。
+- 表结构 `messages(id, owner, peer, sender, direction, ts, body)`；`peer` 目前固定 `all`（广播）。
+- **记录按昵称隔离**：登录成功后才加载该昵称的历史，换昵称等于换身份，看不到别人的记录。
+- 上次登录的昵称会记住，下次启动直接填好，不需要每次重输。
 - 启动只读最近 200 条，顶部「加载更早」按 `id < 上一条` 再取 200 条，不会一次把整库读进内存。
 - 自己发的消息在发送时入库并显示，不等服务端回显。
 - 打包给别人时要带上 `sqldrivers/qsqlite.dll`，否则启动后没有历史记录（Qt 报找不到 QSQLITE 驱动）。

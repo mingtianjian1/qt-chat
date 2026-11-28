@@ -12,13 +12,16 @@ namespace {
 ChatMessage readRow(const QSqlQuery &query) {
     ChatMessage message;
     message.id = query.value(0).toLongLong();
-    message.peer = query.value(1).toString();
-    message.sender = query.value(2).toString();
-    message.direction = query.value(3).toInt();
-    message.ts = query.value(4).toLongLong();
-    message.body = query.value(5).toString();
+    message.owner = query.value(1).toString();
+    message.peer = query.value(2).toString();
+    message.sender = query.value(3).toString();
+    message.direction = query.value(4).toInt();
+    message.ts = query.value(5).toLongLong();
+    message.body = query.value(6).toString();
     return message;
 }
+
+const char *kColumns = "id, owner, peer, sender, direction, ts, body";
 
 }  // namespace
 
@@ -50,6 +53,7 @@ bool HistoryStore::open(const QString &filePath, QString *error) {
 
     if (!query.exec("CREATE TABLE IF NOT EXISTS messages("
                     " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                    " owner TEXT NOT NULL DEFAULT '',"
                     " peer TEXT NOT NULL,"
                     " sender TEXT NOT NULL,"
                     " direction INTEGER NOT NULL,"
@@ -61,8 +65,23 @@ bool HistoryStore::open(const QString &filePath, QString *error) {
         db.close();
         return false;
     }
-    query.exec("CREATE INDEX IF NOT EXISTS idx_messages_peer_id "
-               "ON messages(peer, id DESC)");
+
+    // 老库没有 owner 列：补一列，旧记录 owner 为空，等下次登录认领
+    bool hasOwner = false;
+    QSqlQuery info(db);
+    if (info.exec("PRAGMA table_info(messages)")) {
+        while (info.next()) {
+            if (info.value(1).toString() == QLatin1String("owner")) {
+                hasOwner = true;
+            }
+        }
+    }
+    if (!hasOwner) {
+        query.exec("ALTER TABLE messages ADD COLUMN owner TEXT NOT NULL DEFAULT ''");
+    }
+
+    query.exec("CREATE INDEX IF NOT EXISTS idx_messages_owner_id "
+               "ON messages(owner, id DESC)");
 
     m_open = true;
     return true;
@@ -82,16 +101,17 @@ void HistoryStore::close() {
     m_open = false;
 }
 
-bool HistoryStore::append(const QString &peer, const QString &sender, int direction,
-                          qint64 ts, const QString &body) {
+bool HistoryStore::append(const QString &owner, const QString &peer, const QString &sender,
+                          int direction, qint64 ts, const QString &body) {
     QSqlDatabase db = QSqlDatabase::database(m_connectionName, false);
     if (!db.isOpen()) {
         return false;
     }
 
     QSqlQuery query(db);
-    query.prepare("INSERT INTO messages(peer, sender, direction, ts, body) "
-                  "VALUES(?, ?, ?, ?, ?)");
+    query.prepare("INSERT INTO messages(owner, peer, sender, direction, ts, body) "
+                  "VALUES(?, ?, ?, ?, ?, ?)");
+    query.addBindValue(owner);
     query.addBindValue(peer);
     query.addBindValue(sender);
     query.addBindValue(direction);
@@ -100,7 +120,7 @@ bool HistoryStore::append(const QString &peer, const QString &sender, int direct
     return query.exec();
 }
 
-QList<ChatMessage> HistoryStore::latest(int limit) {
+QList<ChatMessage> HistoryStore::latest(const QString &owner, int limit) {
     QList<ChatMessage> messages;
     QSqlDatabase db = QSqlDatabase::database(m_connectionName, false);
     if (!db.isOpen()) {
@@ -108,8 +128,10 @@ QList<ChatMessage> HistoryStore::latest(int limit) {
     }
 
     QSqlQuery query(db);
-    query.prepare("SELECT id, peer, sender, direction, ts, body FROM messages "
-                  "ORDER BY id DESC LIMIT ?");
+    query.prepare(QStringLiteral("SELECT %1 FROM messages WHERE owner = ? "
+                                 "ORDER BY id DESC LIMIT ?")
+                      .arg(QLatin1String(kColumns)));
+    query.addBindValue(owner);
     query.addBindValue(limit);
     if (!query.exec()) {
         return messages;
@@ -121,7 +143,7 @@ QList<ChatMessage> HistoryStore::latest(int limit) {
     return messages;
 }
 
-QList<ChatMessage> HistoryStore::before(qint64 beforeId, int limit) {
+QList<ChatMessage> HistoryStore::before(const QString &owner, qint64 beforeId, int limit) {
     QList<ChatMessage> messages;
     QSqlDatabase db = QSqlDatabase::database(m_connectionName, false);
     if (!db.isOpen()) {
@@ -129,8 +151,10 @@ QList<ChatMessage> HistoryStore::before(qint64 beforeId, int limit) {
     }
 
     QSqlQuery query(db);
-    query.prepare("SELECT id, peer, sender, direction, ts, body FROM messages "
-                  "WHERE id < ? ORDER BY id DESC LIMIT ?");
+    query.prepare(QStringLiteral("SELECT %1 FROM messages WHERE owner = ? AND id < ? "
+                                 "ORDER BY id DESC LIMIT ?")
+                      .arg(QLatin1String(kColumns)));
+    query.addBindValue(owner);
     query.addBindValue(beforeId);
     query.addBindValue(limit);
     if (!query.exec()) {
@@ -143,14 +167,14 @@ QList<ChatMessage> HistoryStore::before(qint64 beforeId, int limit) {
     return messages;
 }
 
-int HistoryStore::count() {
+bool HistoryStore::claimLegacy(const QString &owner) {
     QSqlDatabase db = QSqlDatabase::database(m_connectionName, false);
     if (!db.isOpen()) {
-        return 0;
+        return false;
     }
+
     QSqlQuery query(db);
-    if (!query.exec("SELECT COUNT(*) FROM messages") || !query.next()) {
-        return 0;
-    }
-    return query.value(0).toInt();
+    query.prepare("UPDATE messages SET owner = ? WHERE owner = ''");
+    query.addBindValue(owner);
+    return query.exec();
 }

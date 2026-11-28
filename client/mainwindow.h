@@ -40,7 +40,7 @@ private:
     void setConnectedUi(bool connected);
 
     void openHistory();
-    void loadHistory();
+    void loadHistory(const QString &owner);
     void recordMessage(int direction, const QString &sender, const QString &body);
     QString formatLine(const ChatMessage &message) const;
 
