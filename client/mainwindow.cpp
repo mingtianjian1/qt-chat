@@ -5,22 +5,37 @@
 
 #include <QDateTime>
 #include <QDir>
+#include <QFontMetrics>
 #include <QHBoxLayout>
+#include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QListWidgetItem>
 #include <QPushButton>
 #include <QScrollBar>
 #include <QSettings>
 #include <QSpinBox>
 #include <QStandardPaths>
-#include <QTextCursor>
 #include <QTextEdit>
 #include <QVBoxLayout>
 
 namespace {
 
-constexpr int kPageSize = 200;   // 每次从库里取多少条
+constexpr int kPageSize = 200;
+constexpr int kBubbleTextWidth = 380;   // 气泡内文字最大宽度
+constexpr int kBubblePadX = 12;
+constexpr int kBubblePadY = 8;
+
+QString avatarColor(const QString &name) {
+    static const QStringList colors = {"#5b8ff9", "#f6a623", "#52c41a",
+                                       "#13c2c2", "#9254de", "#f56c6c"};
+    return colors.at(int(qHash(name) % uint(colors.size())));
+}
+
+QString clockText(qint64 ts) {
+    return QDateTime::fromMSecsSinceEpoch(ts).toString("HH:mm");
+}
 
 }  // namespace
 
@@ -46,63 +61,216 @@ MainWindow::MainWindow(QWidget *parent) : QWidget(parent) {
 
 void MainWindow::buildUi() {
     setWindowTitle("qt-chat");
-    resize(760, 520);
+    resize(960, 640);
+    setMinimumSize(760, 520);
 
+    // ---------- 左侧：在线列表 ----------
+    auto *leftPanel = new QWidget(this);
+    leftPanel->setFixedWidth(210);
+    leftPanel->setStyleSheet("background:#f7f7f7;border-right:1px solid #e3e3e3;");
+
+    auto *onlineTitle = new QLabel("在线", leftPanel);
+    onlineTitle->setStyleSheet("font-weight:bold;color:#444;font-size:14px;");
+
+    m_users = new QListWidget(leftPanel);
+    m_users->setStyleSheet(
+        "QListWidget{background:transparent;border:none;}"
+        "QListWidget::item{height:34px;padding-left:6px;color:#333;}"
+        "QListWidget::item:selected{background:#e9e9e9;color:#000;}");
+
+    auto *leftLayout = new QVBoxLayout(leftPanel);
+    leftLayout->setContentsMargins(12, 14, 12, 12);
+    leftLayout->setSpacing(8);
+    leftLayout->addWidget(onlineTitle);
+    leftLayout->addWidget(m_users);
+
+    // ---------- 右侧：顶部连接栏 ----------
     m_nickname = new QLineEdit("guest", this);
-    m_nickname->setMaximumWidth(100);
-
+    m_nickname->setMaximumWidth(110);
     m_host = new QLineEdit("127.0.0.1", this);
-
     m_port = new QSpinBox(this);
     m_port->setRange(1, 65535);
     m_port->setValue(9527);
-
+    m_port->setMaximumWidth(90);
     m_connectButton = new QPushButton("连接", this);
+    m_status = new QLabel("● 未连接", this);
+    m_status->setStyleSheet("color:#999;font-size:12px;");
 
+    auto *topBar = new QWidget(this);
+    topBar->setStyleSheet("background:#f7f7f7;border-bottom:1px solid #e3e3e3;");
+    auto *topLayout = new QHBoxLayout(topBar);
+    topLayout->setContentsMargins(12, 8, 12, 8);
+    topLayout->setSpacing(8);
+    topLayout->addWidget(new QLabel("昵称", topBar));
+    topLayout->addWidget(m_nickname);
+    topLayout->addWidget(new QLabel("服务器", topBar));
+    topLayout->addWidget(m_host);
+    topLayout->addWidget(m_port);
+    topLayout->addWidget(m_connectButton);
+    topLayout->addStretch(1);
+    topLayout->addWidget(m_status);
+
+    // ---------- 右侧：消息区 ----------
     m_loadEarlier = new QPushButton("加载更早", this);
     m_loadEarlier->setVisible(false);
+    m_loadEarlier->setStyleSheet("QPushButton{border:none;color:#576b95;background:transparent;}"
+                                 "QPushButton:hover{color:#1a4fbf;}");
 
-    m_log = new QTextEdit(this);
-    m_log->setReadOnly(true);
+    m_messages = new QListWidget(this);
+    m_messages->setSelectionMode(QAbstractItemView::NoSelection);
+    m_messages->setFocusPolicy(Qt::NoFocus);
+    m_messages->setStyleSheet("QListWidget{background:#f5f5f5;border:none;}");
 
-    m_message = new QLineEdit(this);
-    m_message->setPlaceholderText("一行字，回车发送");
+    // ---------- 右侧：输入区 ----------
+    m_input = new QTextEdit(this);
+    m_input->setPlaceholderText("输入消息，Enter 发送，Shift+Enter 换行");
+    m_input->setFixedHeight(88);
+    m_input->installEventFilter(this);
+    m_input->setStyleSheet("QTextEdit{background:#ffffff;border:1px solid #e0e0e0;"
+                           "border-radius:6px;padding:6px;}");
 
     m_sendButton = new QPushButton("发送", this);
+    m_sendButton->setFixedSize(88, 34);
+    m_sendButton->setStyleSheet("QPushButton{background:#07c160;color:white;border:none;"
+                                "border-radius:4px;font-size:13px;}"
+                                "QPushButton:hover{background:#06ad56;}");
 
-    m_users = new QListWidget(this);
-    m_users->setMaximumWidth(170);
+    auto *inputArea = new QWidget(this);
+    inputArea->setStyleSheet("background:#f7f7f7;border-top:1px solid #e3e3e3;");
+    auto *inputLayout = new QHBoxLayout(inputArea);
+    inputLayout->setContentsMargins(12, 10, 12, 10);
+    inputLayout->setSpacing(8);
+    inputLayout->addWidget(m_input, 1);
+    inputLayout->addWidget(m_sendButton, 0, Qt::AlignBottom);
 
-    auto *connectRow = new QHBoxLayout;
-    connectRow->addWidget(new QLabel("昵称", this));
-    connectRow->addWidget(m_nickname);
-    connectRow->addWidget(new QLabel("服务器", this));
-    connectRow->addWidget(m_host);
-    connectRow->addWidget(m_port);
-    connectRow->addWidget(m_connectButton);
-
-    auto *sendRow = new QHBoxLayout;
-    sendRow->addWidget(m_message);
-    sendRow->addWidget(m_sendButton);
-
-    auto *left = new QVBoxLayout;
-    left->addLayout(connectRow);
-    left->addWidget(m_loadEarlier);
-    left->addWidget(m_log);
-    left->addLayout(sendRow);
-
-    auto *right = new QVBoxLayout;
-    right->addWidget(new QLabel("在线", this));
-    right->addWidget(m_users);
+    auto *rightLayout = new QVBoxLayout;
+    rightLayout->setContentsMargins(0, 0, 0, 0);
+    rightLayout->setSpacing(0);
+    rightLayout->addWidget(topBar);
+    rightLayout->addWidget(m_loadEarlier, 0, Qt::AlignHCenter);
+    rightLayout->addWidget(m_messages, 1);
+    rightLayout->addWidget(inputArea);
 
     auto *root = new QHBoxLayout(this);
-    root->addLayout(left, 1);
-    root->addLayout(right);
+    root->setContentsMargins(0, 0, 0, 0);
+    root->setSpacing(0);
+    root->addWidget(leftPanel);
+    root->addLayout(rightLayout, 1);
 
     connect(m_connectButton, &QPushButton::clicked, this, &MainWindow::onConnectClicked);
     connect(m_sendButton, &QPushButton::clicked, this, &MainWindow::onSendClicked);
     connect(m_loadEarlier, &QPushButton::clicked, this, &MainWindow::onLoadEarlierClicked);
-    connect(m_message, &QLineEdit::returnPressed, m_sendButton, &QPushButton::click);
+}
+
+bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
+    if (watched == m_input && event->type() == QEvent::KeyPress) {
+        auto *key = static_cast<QKeyEvent *>(event);
+        const bool enter = key->key() == Qt::Key_Return || key->key() == Qt::Key_Enter;
+        if (enter && !(key->modifiers() & Qt::ShiftModifier)) {
+            onSendClicked();
+            return true;
+        }
+    }
+    return QWidget::eventFilter(watched, event);
+}
+
+QWidget *MainWindow::createMessageWidget(const ChatMessage &message) const {
+    const bool self = message.direction == 1;
+    const QString name = self ? m_selfName : message.sender;
+
+    auto *row = new QWidget;
+    auto *layout = new QHBoxLayout(row);
+    layout->setContentsMargins(12, 5, 12, 5);
+    layout->setSpacing(8);
+
+    auto *avatar = new QLabel(name.left(1).toUpper(), row);
+    avatar->setFixedSize(34, 34);
+    avatar->setAlignment(Qt::AlignCenter);
+    avatar->setStyleSheet(QStringLiteral("background:%1;color:white;border-radius:17px;"
+                                         "font-weight:bold;font-size:14px;")
+                              .arg(avatarColor(name)));
+
+    auto *meta = new QLabel(name + "   " + clockText(message.ts), row);
+    meta->setStyleSheet("color:#999;font-size:11px;");
+    meta->setAlignment(self ? Qt::AlignRight : Qt::AlignLeft);
+
+    auto *bubble = new QLabel(message.body, row);
+    bubble->setWordWrap(true);
+    bubble->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    bubble->setStyleSheet(self
+        ? "background:#95ec69;border-radius:8px;padding:8px 12px;color:#111;"
+        : "background:#ffffff;border:1px solid #e6e6e6;border-radius:8px;"
+          "padding:8px 12px;color:#111;");
+
+    const QFontMetrics fm(bubble->font());
+    const int textWidth = fm.boundingRect(QRect(0, 0, kBubbleTextWidth, 100000),
+                                          Qt::TextWordWrap, message.body).width();
+    // 多留几像素：QSS 的 padding/border 会占掉内容宽度，正好等于文字宽度时会裁掉最后一两个字
+    const int contentWidth = qBound(40, textWidth + 6, kBubbleTextWidth);
+    const int width = contentWidth + 2 * kBubblePadX + 2;
+    const int height = fm.boundingRect(QRect(0, 0, contentWidth, 100000),
+                                       Qt::TextWordWrap, message.body).height()
+                       + 2 * kBubblePadY + 2;
+    bubble->setFixedSize(width, height);
+
+    auto *column = new QVBoxLayout;
+    column->setSpacing(3);
+    column->addWidget(meta);
+    column->addWidget(bubble, 0, self ? Qt::AlignRight : Qt::AlignLeft);
+
+    if (self) {
+        layout->addStretch(1);
+        layout->addLayout(column);
+        layout->addWidget(avatar, 0, Qt::AlignTop);
+    } else {
+        layout->addWidget(avatar, 0, Qt::AlignTop);
+        layout->addLayout(column);
+        layout->addStretch(1);
+    }
+    return row;
+}
+
+QWidget *MainWindow::createNoticeWidget(const QString &text) const {
+    auto *row = new QWidget;
+    auto *layout = new QHBoxLayout(row);
+    layout->setContentsMargins(12, 4, 12, 4);
+
+    auto *label = new QLabel(text, row);
+    label->setStyleSheet("color:#999;font-size:11px;background:#e9e9e9;"
+                         "border-radius:6px;padding:3px 10px;");
+
+    layout->addStretch(1);
+    layout->addWidget(label);
+    layout->addStretch(1);
+    return row;
+}
+
+void MainWindow::appendWidget(QWidget *widget) {
+    auto *item = new QListWidgetItem;
+    item->setSizeHint(widget->sizeHint());
+    m_messages->addItem(item);
+    m_messages->setItemWidget(item, widget);
+    m_messages->scrollToBottom();
+}
+
+void MainWindow::prependWidget(QWidget *widget) {
+    auto *item = new QListWidgetItem;
+    item->setSizeHint(widget->sizeHint());
+    m_messages->insertItem(0, item);
+    m_messages->setItemWidget(item, widget);
+}
+
+void MainWindow::addNotice(const QString &text) {
+    appendWidget(createNoticeWidget(text));
+}
+
+void MainWindow::addUserItem(const QString &name) {
+    if (m_users->findItems(name, Qt::MatchExactly).isEmpty()) {
+        m_users->addItem(name);
+        if (name == m_selfName) {
+            m_users->item(m_users->count() - 1)->setText(name + "（我）");
+        }
+    }
 }
 
 void MainWindow::openHistory() {
@@ -113,16 +281,16 @@ void MainWindow::openHistory() {
     QString error;
     m_historyReady = m_history->open(path, &error);
     if (!m_historyReady) {
-        m_log->append("历史记录不可用：" + error);
+        addNotice("历史记录不可用：" + error);
         return;
     }
-    m_log->append("未登录。登录后显示该昵称的历史记录。");
+    addNotice("未登录，登录后显示该昵称的历史记录");
 }
 
 void MainWindow::loadHistory(const QString &owner) {
     const QList<ChatMessage> messages = m_history->latest(owner, kPageSize);
     for (const ChatMessage &message : messages) {
-        m_log->append(formatLine(message));
+        appendWidget(createMessageWidget(message));
     }
     m_oldestId = messages.isEmpty() ? 0 : messages.first().id;
     m_loadEarlier->setVisible(messages.size() == kPageSize);
@@ -135,18 +303,22 @@ void MainWindow::onLoadEarlierClicked() {
         return;
     }
 
-    QString block;
+    QListWidgetItem *anchor = m_messages->item(0);
+
+    int index = 0;
     for (const ChatMessage &message : messages) {
-        block += formatLine(message) + '\n';
+        QWidget *widget = createMessageWidget(message);
+        auto *item = new QListWidgetItem;
+        item->setSizeHint(widget->sizeHint());
+        m_messages->insertItem(index, item);
+        m_messages->setItemWidget(item, widget);
+        ++index;
     }
 
-    const int scroll = m_log->verticalScrollBar()->value();
-    QTextCursor cursor(m_log->document());
-    cursor.movePosition(QTextCursor::Start);
-    cursor.insertText(block);                          // 老消息插到最上面
-
     m_oldestId = messages.first().id;
-    m_log->verticalScrollBar()->setValue(scroll + messages.size());
+    if (anchor) {
+        m_messages->scrollToItem(anchor, QAbstractItemView::PositionAtTop);
+    }
     m_loadEarlier->setVisible(messages.size() == kPageSize);
 }
 
@@ -158,11 +330,9 @@ void MainWindow::recordMessage(int direction, const QString &sender, const QStri
                       QDateTime::currentMSecsSinceEpoch(), body);
 }
 
-QString MainWindow::formatLine(const ChatMessage &message) const {
-    if (message.direction == 1) {
-        return "我: " + message.body;
-    }
-    return message.sender + ": " + message.body;
+void MainWindow::setStatus(const QString &text, const QString &color) {
+    m_status->setText(text);
+    m_status->setStyleSheet(QStringLiteral("color:%1;font-size:12px;").arg(color));
 }
 
 void MainWindow::setConnectedUi(bool connected) {
@@ -179,9 +349,10 @@ void MainWindow::onConnectClicked() {
         return;
     }
 
-    m_log->append("正在连接 " + m_host->text() + ":" + QString::number(m_port->value()));
+    setStatus("● 连接中", "#fa9d3b");
     m_connectButton->setText("断开");
     m_nickname->setEnabled(false);
+    addNotice("正在连接 " + m_host->text() + ":" + QString::number(m_port->value()));
     m_client->connectToServer(m_host->text().trimmed(),
                               quint16(m_port->value()),
                               m_nickname->text().trimmed());
@@ -189,70 +360,81 @@ void MainWindow::onConnectClicked() {
 
 void MainWindow::onSendClicked() {
     if (!m_client->isConnected()) {
-        m_log->append("还没连接");
-        return;
-    }
-    if (m_message->text().isEmpty()) {
+        addNotice("还没连接");
         return;
     }
 
-    const QString text = m_message->text();
-    m_message->clear();
+    const QString text = m_input->toPlainText().trimmed();
+    if (text.isEmpty()) {
+        return;
+    }
+    m_input->clear();
 
-    m_log->append("我: " + text);
-    recordMessage(1, QStringLiteral("我"), text);
+    ChatMessage message;
+    message.owner = m_selfName;
+    message.peer = QStringLiteral("all");
+    message.sender = m_selfName;
+    message.direction = 1;
+    message.ts = QDateTime::currentMSecsSinceEpoch();
+    message.body = text;
+    appendWidget(createMessageWidget(message));
+
+    recordMessage(1, m_selfName, text);
     m_client->sendText(text);
 }
 
 void MainWindow::onConnected() {
-    m_log->append("已连接 " + m_host->text() + ":" + QString::number(m_port->value()));
+    setStatus("● 已连接", "#07c160");
     setConnectedUi(true);
+    addNotice("已连接服务器");
 }
 
 void MainWindow::onDisconnected() {
     if (m_client->isActive()) {
-        m_log->append("连接断开，等待重连");
+        setStatus("● 重连中", "#fa9d3b");
+        addNotice("连接断开，等待重连");
         return;
     }
-    m_log->append("已断开");
+    setStatus("● 未连接", "#999999");
+    addNotice("已断开");
     setConnectedUi(false);
 }
 
 void MainWindow::onReconnecting(int attempt, int delayMs) {
-    m_log->append(QStringLiteral("第 %1 次重连，%2 秒后")
-                      .arg(attempt)
-                      .arg(delayMs / 1000.0, 0, 'f', 1));
+    addNotice(QStringLiteral("第 %1 次重连，%2 秒后")
+                  .arg(attempt)
+                  .arg(delayMs / 1000.0, 0, 'f', 1));
 }
 
 void MainWindow::onLoginResult(bool ok, qint64, const QString &text) {
     if (!ok) {
-        m_log->append("登录失败：" + text);
+        addNotice("登录失败：" + text);
         return;
     }
 
     if (text != m_selfName) {
-        // 换了身份：旧记录不属于这个昵称，清屏后加载这个昵称自己的历史
+        // 换了身份：清屏后加载这个昵称自己的历史
         m_selfName = text;
         QSettings settings;
         settings.setValue("lastName", text);
         if (m_historyReady) {
             m_history->claimLegacy(text);
-            m_log->clear();
+            m_messages->clear();
             loadHistory(text);
         }
     }
-    m_log->append("登录成功：" + text);
+    addNotice("登录成功：" + text);
 }
 
 void MainWindow::onUserList(const QStringList &names) {
     m_users->clear();
-    m_users->addItems(names);
+    for (const QString &name : names) {
+        addUserItem(name);
+    }
 }
 
 void MainWindow::onUserJoined(const QString &name) {
-    if (m_users->findItems(name, Qt::MatchExactly).isEmpty()) {
-        m_users->addItem(name);
-    }
+    addUserItem(name);
 }
 
 void MainWindow::onUserLeft(const QString &name) {
@@ -264,12 +446,21 @@ void MainWindow::onUserLeft(const QString &name) {
 
 void MainWindow::onTextReceived(const QString &name, const QString &text) {
     if (name == m_selfName) {
-        return;                                        // 自己发的已本地显示并入库
+        return;                                        // 自己发的已经本地显示过
     }
-    m_log->append(name + ": " + text);
+
+    ChatMessage message;
+    message.owner = m_selfName;
+    message.peer = QStringLiteral("all");
+    message.sender = name;
+    message.direction = 0;
+    message.ts = QDateTime::currentMSecsSinceEpoch();
+    message.body = text;
+    appendWidget(createMessageWidget(message));
+
     recordMessage(0, name, text);
 }
 
 void MainWindow::onError(const QString &message) {
-    m_log->append("错误: " + message);
+    addNotice("错误: " + message);
 }
