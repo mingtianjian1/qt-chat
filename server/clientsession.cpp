@@ -1,13 +1,19 @@
 #include "clientsession.h"
 
 #include <QAbstractSocket>
+#include <QDateTime>
 #include <QTcpSocket>
 
 ClientSession::ClientSession(QTcpSocket *socket, quint32 id, QObject *parent)
     : QObject(parent), m_socket(socket), m_id(id) {
     m_socket->setParent(this);
+    touch();
     connect(m_socket, &QTcpSocket::readyRead, this, &ClientSession::onReadyRead);
     connect(m_socket, &QTcpSocket::disconnected, this, &ClientSession::onDisconnected);
+}
+
+void ClientSession::touch() {
+    m_lastSeenMs = QDateTime::currentMSecsSinceEpoch();
 }
 
 void ClientSession::sendRaw(const QByteArray &frame) {
@@ -21,6 +27,7 @@ void ClientSession::sendFrame(proto::Type type, const QByteArray &payload) {
 }
 
 void ClientSession::onReadyRead() {
+    touch();                                          // 收到任何字节都算活着
     m_buffer.append(m_socket->readAll());
 
     for (;;) {

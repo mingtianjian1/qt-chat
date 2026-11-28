@@ -23,6 +23,7 @@ private slots:
 
     void onConnected();
     void onDisconnected();
+    void onReconnecting(int attempt, int delayMs);
     void onLoginResult(bool ok, qint64 selfId, const QString &text);
     void onUserList(const QStringList &names);
     void onUserJoined(const QString &name);

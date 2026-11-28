@@ -17,6 +17,7 @@ MainWindow::MainWindow(QWidget *parent) : QWidget(parent) {
 
     connect(m_client, &ChatClient::connected, this, &MainWindow::onConnected);
     connect(m_client, &ChatClient::disconnected, this, &MainWindow::onDisconnected);
+    connect(m_client, &ChatClient::reconnecting, this, &MainWindow::onReconnecting);
     connect(m_client, &ChatClient::loginResult, this, &MainWindow::onLoginResult);
     connect(m_client, &ChatClient::userList, this, &MainWindow::onUserList);
     connect(m_client, &ChatClient::userJoined, this, &MainWindow::onUserJoined);
@@ -90,10 +91,14 @@ void MainWindow::setConnectedUi(bool connected) {
 }
 
 void MainWindow::onConnectClicked() {
-    if (m_client->isConnected()) {
+    if (m_client->isActive()) {
         m_client->disconnectFromServer();
         return;
     }
+
+    m_log->append("正在连接 " + m_host->text() + ":" + QString::number(m_port->value()));
+    m_connectButton->setText("断开");
+    m_nickname->setEnabled(false);
     m_client->connectToServer(m_host->text().trimmed(),
                               quint16(m_port->value()),
                               m_nickname->text().trimmed());
@@ -117,8 +122,18 @@ void MainWindow::onConnected() {
 }
 
 void MainWindow::onDisconnected() {
+    if (m_client->isActive()) {
+        m_log->append("连接断开，等待重连");
+        return;
+    }
     m_log->append("已断开");
     setConnectedUi(false);
+}
+
+void MainWindow::onReconnecting(int attempt, int delayMs) {
+    m_log->append(QStringLiteral("第 %1 次重连，%2 秒后")
+                      .arg(attempt)
+                      .arg(delayMs / 1000.0, 0, 'f', 1));
 }
 
 void MainWindow::onLoginResult(bool ok, qint64, const QString &text) {

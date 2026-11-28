@@ -25,6 +25,9 @@ public:
     bool isLoggedIn() const { return m_loggedIn; }
     void setLoggedIn(bool loggedIn) { m_loggedIn = loggedIn; }
 
+    qint64 lastSeenMs() const { return m_lastSeenMs; }
+    void touch();
+
     void sendRaw(const QByteArray &frame);
     void sendFrame(proto::Type type, const QByteArray &payload = {});
 
@@ -42,4 +45,5 @@ private:
     quint32 m_id = 0;
     QString m_name;
     bool m_loggedIn = false;
+    qint64 m_lastSeenMs = 0;
 };

@@ -3,6 +3,7 @@
 #include <QSet>
 #include <QTcpServer>
 
+class QTimer;
 class ClientSession;
 
 // 无状态中转：维护在线表，处理登录与广播，连接断开时清理。
@@ -19,6 +20,7 @@ protected:
 private slots:
     void onFrame(ClientSession *session, int type, const QByteArray &payload);
     void onClosed(ClientSession *session);
+    void checkIdleSessions();
 
 private:
     void handleLogin(ClientSession *session, const QByteArray &payload);
@@ -31,4 +33,5 @@ private:
 
     QSet<ClientSession *> m_sessions;
     quint32 m_nextId = 1;
+    QTimer *m_idleTimer = nullptr;
 };

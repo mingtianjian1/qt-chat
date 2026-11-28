@@ -8,7 +8,9 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QList>
 #include <QTcpSocket>
+#include <QTimer>
 
 namespace {
 
@@ -16,9 +18,17 @@ QByteArray toJson(const QJsonObject &object) {
     return QJsonDocument(object).toJson(QJsonDocument::Compact);
 }
 
+constexpr int kIdleTimeoutMs = 30'000;      // 30 秒没收到任何字节就认为断了
+constexpr int kIdleCheckIntervalMs = 5'000;
+
 }  // namespace
 
-ChatServer::ChatServer(QObject *parent) : QTcpServer(parent) {}
+ChatServer::ChatServer(QObject *parent) : QTcpServer(parent) {
+    m_idleTimer = new QTimer(this);
+    m_idleTimer->setInterval(kIdleCheckIntervalMs);
+    connect(m_idleTimer, &QTimer::timeout, this, &ChatServer::checkIdleSessions);
+    m_idleTimer->start();
+}
 
 void ChatServer::incomingConnection(qintptr handle) {
     auto *socket = new QTcpSocket(this);
@@ -157,6 +167,23 @@ void ChatServer::broadcastExcept(const QByteArray &frame, ClientSession *except)
         if (session != except) {
             session->sendRaw(frame);
         }
+    }
+}
+
+void ChatServer::checkIdleSessions() {
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+
+    QList<ClientSession *> dead;
+    for (ClientSession *session : m_sessions) {
+        if (now - session->lastSeenMs() > kIdleTimeoutMs) {
+            dead.append(session);
+        }
+    }
+
+    // abort 会同步触发 closed -> onClosed，所以先收集再处理，避免遍历中修改 m_sessions
+    for (ClientSession *session : dead) {
+        qInfo() << "session" << session->id() << "idle timeout, dropping";
+        session->socket()->abort();
     }
 }
 
