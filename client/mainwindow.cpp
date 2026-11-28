@@ -5,13 +5,17 @@
 
 #include <QDateTime>
 #include <QDir>
+#include <QFileDialog>
+#include <QFileInfo>
 #include <QFontMetrics>
+#include <QFrame>
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QListWidgetItem>
+#include <QProgressBar>
 #include <QPushButton>
 #include <QScrollBar>
 #include <QSettings>
@@ -57,6 +61,9 @@ MainWindow::MainWindow(QWidget *parent) : QWidget(parent) {
     connect(m_client, &ChatClient::userLeft, this, &MainWindow::onUserLeft);
     connect(m_client, &ChatClient::textReceived, this, &MainWindow::onTextReceived);
     connect(m_client, &ChatClient::errorOccurred, this, &MainWindow::onError);
+    connect(m_client, &ChatClient::fileOffer, this, &MainWindow::onFileOffer);
+    connect(m_client, &ChatClient::fileProgress, this, &MainWindow::onFileProgress);
+    connect(m_client, &ChatClient::fileFinished, this, &MainWindow::onFileFinished);
 }
 
 void MainWindow::buildUi() {
@@ -129,6 +136,12 @@ void MainWindow::buildUi() {
     m_input->setStyleSheet("QTextEdit{background:#ffffff;border:1px solid #e0e0e0;"
                            "border-radius:6px;padding:6px;}");
 
+    m_sendFileButton = new QPushButton("文件", this);
+    m_sendFileButton->setFixedSize(64, 34);
+    m_sendFileButton->setStyleSheet("QPushButton{background:#f2f2f2;border:1px solid #e0e0e0;"
+                                    "border-radius:4px;color:#333;font-size:13px;}"
+                                    "QPushButton:hover{background:#e8e8e8;}");
+
     m_sendButton = new QPushButton("发送", this);
     m_sendButton->setFixedSize(88, 34);
     m_sendButton->setStyleSheet("QPushButton{background:#07c160;color:white;border:none;"
@@ -142,6 +155,7 @@ void MainWindow::buildUi() {
     inputRow->setContentsMargins(0, 0, 0, 0);
     inputRow->setSpacing(8);
     inputRow->addWidget(m_input, 1);
+    inputRow->addWidget(m_sendFileButton, 0, Qt::AlignBottom);
     inputRow->addWidget(m_sendButton, 0, Qt::AlignBottom);
 
     auto *inputArea = new QWidget(this);
@@ -168,6 +182,7 @@ void MainWindow::buildUi() {
 
     connect(m_connectButton, &QPushButton::clicked, this, &MainWindow::onConnectClicked);
     connect(m_sendButton, &QPushButton::clicked, this, &MainWindow::onSendClicked);
+    connect(m_sendFileButton, &QPushButton::clicked, this, &MainWindow::onSendFileClicked);
     connect(m_loadEarlier, &QPushButton::clicked, this, &MainWindow::onLoadEarlierClicked);
     connect(m_users, &QListWidget::itemSelectionChanged,
             this, &MainWindow::onUserSelectionChanged);
@@ -458,6 +473,7 @@ void MainWindow::onLoginResult(bool ok, qint64 selfId, const QString &text) {
         if (m_historyReady) {
             m_history->claimLegacy(text);
             m_messages->clear();
+            m_fileWidgets.clear();
             loadHistory(text);
         }
     }
@@ -500,6 +516,123 @@ void MainWindow::onTextReceived(const QString &name, const QString &text, bool i
     appendWidget(createMessageWidget(message));
 
     recordMessage(message.peer, 0, name, text);
+}
+
+void MainWindow::onSendFileClicked() {
+    if (!m_client->isConnected()) {
+        addNotice("还没连接");
+        return;
+    }
+
+    QListWidgetItem *item = m_users->currentItem();
+    if (!item || item->data(Qt::UserRole).toLongLong() == m_selfId) {
+        addNotice("先在左侧选一个在线用户，再发文件");
+        return;
+    }
+
+    const QString path = QFileDialog::getOpenFileName(this, "选择要发送的文件");
+    if (path.isEmpty()) {
+        return;
+    }
+
+    const qint64 toId = item->data(Qt::UserRole).toLongLong();
+    const quint32 id = m_client->sendFile(path, toId);
+    if (id == 0) {
+        return;
+    }
+
+    const QFileInfo info(path);
+    appendWidget(createFileWidget(id, "发送文件：" + info.fileName(), info.size(), true));
+    addNotice("等待 " + item->text() + " 接收");
+}
+
+QWidget *MainWindow::createFileWidget(quint32 id, const QString &title,
+                                      qint64 total, bool outgoing) {
+    auto *row = new QWidget;
+    auto *layout = new QHBoxLayout(row);
+    layout->setContentsMargins(12, 5, 12, 5);
+    layout->setSpacing(8);
+
+    auto *box = new QFrame(row);
+    box->setFixedWidth(330);
+    box->setStyleSheet("QFrame{background:#ffffff;border:1px solid #e6e6e6;border-radius:8px;}");
+
+    auto *titleLabel = new QLabel(title, box);
+    titleLabel->setWordWrap(true);
+    titleLabel->setStyleSheet("color:#111;font-weight:bold;font-size:12px;border:none;");
+
+    auto *bar = new QProgressBar(box);
+    bar->setRange(0, 100);
+    bar->setValue(0);
+    bar->setTextVisible(false);
+    bar->setFixedHeight(8);
+    bar->setStyleSheet("QProgressBar{background:#eeeeee;border:none;border-radius:4px;}"
+                       "QProgressBar::chunk{background:#07c160;border-radius:4px;}");
+
+    auto *status = new QLabel("0%", box);
+    status->setStyleSheet("color:#888;font-size:11px;border:none;");
+
+    auto *cancel = new QPushButton("取消", box);
+    cancel->setFixedSize(56, 24);
+    cancel->setStyleSheet("QPushButton{background:transparent;border:1px solid #ddd;"
+                          "border-radius:4px;color:#666;font-size:11px;}");
+
+    auto *bottom = new QHBoxLayout;
+    bottom->addWidget(status, 1);
+    bottom->addWidget(cancel);
+
+    auto *inner = new QVBoxLayout(box);
+    inner->setContentsMargins(10, 8, 10, 8);
+    inner->setSpacing(6);
+    inner->addWidget(titleLabel);
+    inner->addWidget(bar);
+    inner->addLayout(bottom);
+
+    if (outgoing) {
+        layout->addStretch(1);
+        layout->addWidget(box);
+    } else {
+        layout->addWidget(box);
+        layout->addStretch(1);
+    }
+
+    m_fileWidgets.insert(id, FileWidgets{bar, status, cancel});
+    connect(cancel, &QPushButton::clicked, this, [this, id] { m_client->cancelFile(id); });
+
+    Q_UNUSED(total);
+    return row;
+}
+
+void MainWindow::onFileOffer(quint32 id, const QString &fromName,
+                             const QString &fileName, qint64 size) {
+    appendWidget(createFileWidget(
+        id, QStringLiteral("接收文件：%1（来自 %2）").arg(fileName, fromName), size, false));
+    addNotice(QStringLiteral("正在接收 %1，保存在下载目录").arg(fileName));
+}
+
+void MainWindow::onFileProgress(quint32 id, qint64 transferred, qint64 total) {
+    auto it = m_fileWidgets.find(id);
+    if (it == m_fileWidgets.end()) {
+        return;
+    }
+    const int percent = total > 0 ? int(transferred * 100 / total) : 0;
+    it->bar->setValue(percent);
+    it->status->setText(QStringLiteral("%1 / %2 MB · %3%")
+                            .arg(transferred / 1048576.0, 0, 'f', 1)
+                            .arg(total / 1048576.0, 0, 'f', 1)
+                            .arg(percent));
+}
+
+void MainWindow::onFileFinished(quint32 id, bool ok, const QString &message) {
+    auto it = m_fileWidgets.find(id);
+    if (it != m_fileWidgets.end()) {
+        if (ok) {
+            it->bar->setValue(100);
+        }
+        it->status->setText(message);
+        it->cancel->setVisible(false);
+    }
+    addNotice(ok ? "文件传输完成：" + message : "文件传输中止：" + message);
 }
 
 void MainWindow::onError(const QString &message) {

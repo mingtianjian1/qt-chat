@@ -2,6 +2,7 @@
 
 #include "chatclient.h"
 
+#include <QHash>
 #include <QString>
 #include <QWidget>
 
@@ -9,6 +10,7 @@ class HistoryStore;
 class QLabel;
 class QLineEdit;
 class QListWidget;
+class QProgressBar;
 class QPushButton;
 class QSpinBox;
 class QTextEdit;
@@ -28,6 +30,7 @@ protected:
 private slots:
     void onConnectClicked();
     void onSendClicked();
+    void onSendFileClicked();
     void onLoadEarlierClicked();
     void onUserSelectionChanged();
 
@@ -41,7 +44,18 @@ private slots:
     void onTextReceived(const QString &name, const QString &text, bool isPrivate);
     void onError(const QString &message);
 
+    void onFileOffer(quint32 id, const QString &fromName,
+                     const QString &fileName, qint64 size);
+    void onFileProgress(quint32 id, qint64 transferred, qint64 total);
+    void onFileFinished(quint32 id, bool ok, const QString &message);
+
 private:
+    struct FileWidgets {
+        QProgressBar *bar = nullptr;
+        QLabel *status = nullptr;
+        QPushButton *cancel = nullptr;
+    };
+
     void buildUi();
     void setConnectedUi(bool connected);
     void setStatus(const QString &text, const QString &color);
@@ -53,6 +67,8 @@ private:
 
     QWidget *createMessageWidget(const ChatMessage &message) const;
     QWidget *createNoticeWidget(const QString &text) const;
+    QWidget *createFileWidget(quint32 id, const QString &title,
+                              qint64 total, bool outgoing);
     void appendWidget(QWidget *widget);
     void addNotice(const QString &text);
     void addUserItem(const ChatUser &user);
@@ -70,6 +86,7 @@ private:
     QListWidget *m_messages = nullptr;
     QListWidget *m_users = nullptr;
     QTextEdit *m_input = nullptr;
+    QPushButton *m_sendFileButton = nullptr;
     QPushButton *m_sendButton = nullptr;
     QLabel *m_status = nullptr;
     QLabel *m_targetLabel = nullptr;
@@ -77,4 +94,6 @@ private:
     QString m_selfName;
     qint64 m_selfId = 0;
     qint64 m_oldestId = 0;
+
+    QHash<quint32, FileWidgets> m_fileWidgets;
 };

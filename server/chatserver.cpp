@@ -11,6 +11,7 @@
 #include <QList>
 #include <QTcpSocket>
 #include <QTimer>
+#include <QtEndian>
 
 namespace {
 
@@ -56,6 +57,13 @@ void ChatServer::onFrame(ClientSession *session, int type, const QByteArray &pay
         break;
     case proto::Type::ChatText:
         handleChat(session, payload);
+        break;
+    case proto::Type::FileOffer:
+    case proto::Type::FileAccept:
+    case proto::Type::FileReject:
+    case proto::Type::FileChunk:
+    case proto::Type::FileEnd:
+        handleFile(session, frameType, payload);
         break;
     case proto::Type::Ping:
         session->sendFrame(proto::Type::Pong);
@@ -163,6 +171,65 @@ void ChatServer::handleChat(ClientSession *session, const QByteArray &payload) {
             << "chars (private to" << target->name() << ")";
 }
 
+void ChatServer::handleFile(ClientSession *session, proto::Type type, const QByteArray &payload) {
+    if (!session->isLoggedIn()) {
+        return;
+    }
+
+    // 第一条是 FileOffer：建立 fileId -> (from, to) 的路由，然后转发给目标
+    if (type == proto::Type::FileOffer) {
+        const QJsonObject offer = QJsonDocument::fromJson(payload).object();
+        const quint32 fileId = quint32(offer.value("fileId").toInteger());
+        const qint64 to = qint64(offer.value("to").toInteger());
+        ClientSession *target = findById(to);
+
+        if (fileId == 0 || !target || !target->isLoggedIn()) {
+            QJsonObject error;
+            error["code"] = "user_offline";
+            error["msg"] = "对方不在线";
+            session->sendFrame(proto::Type::Error, toJson(error));
+            return;
+        }
+
+        m_fileRoutes.insert(fileId, {session->id(), target->id()});
+
+        QJsonObject forward = offer;
+        forward["from"] = qint64(session->id());
+        forward["fromName"] = session->name();
+        forward["toName"] = target->name();
+        target->sendRaw(proto::encode(proto::Type::FileOffer, toJson(forward)));
+
+        qInfo() << "file" << fileId << "offer" << session->name() << "->" << target->name();
+        return;
+    }
+
+    // 其余帧按 fileId 找路由，转发给另一端；双向都走这里（Accept/Reject/End 或数据块）
+    quint32 fileId = 0;
+    if (type == proto::Type::FileChunk) {
+        if (payload.size() < 8) {
+            return;
+        }
+        fileId = qFromBigEndian<quint32>(payload.constData());
+    } else {
+        fileId = quint32(QJsonDocument::fromJson(payload).object().value("fileId").toInteger());
+    }
+
+    const auto it = m_fileRoutes.constFind(fileId);
+    if (it == m_fileRoutes.constEnd()) {
+        return;
+    }
+
+    const quint32 peerId = (session->id() == it.value().first) ? it.value().second
+                                                               : it.value().first;
+    if (ClientSession *peer = findById(peerId)) {
+        peer->sendRaw(proto::encode(type, payload));
+    }
+
+    if (type == proto::Type::FileEnd) {
+        m_fileRoutes.remove(fileId);
+    }
+}
+
 ClientSession *ChatServer::findById(qint64 id) const {
     for (ClientSession *session : m_sessions) {
         if (qint64(session->id()) == id) {
@@ -178,6 +245,23 @@ void ChatServer::onClosed(ClientSession *session) {
         leave["id"] = qint64(session->id());
         leave["name"] = session->name();
         broadcastExcept(proto::encode(proto::Type::UserLeave, toJson(leave)), session);
+    }
+
+    // 这个连接上还没传完的文件：通知对端中止，并清掉路由
+    for (auto it = m_fileRoutes.begin(); it != m_fileRoutes.end();) {
+        if (it.value().first == session->id() || it.value().second == session->id()) {
+            const quint32 peerId = (it.value().first == session->id()) ? it.value().second
+                                                                       : it.value().first;
+            if (ClientSession *peer = findById(peerId)) {
+                QJsonObject end;
+                end["fileId"] = qint64(it.key());
+                end["ok"] = false;
+                peer->sendFrame(proto::Type::FileEnd, toJson(end));
+            }
+            it = m_fileRoutes.erase(it);
+        } else {
+            ++it;
+        }
     }
 
     m_sessions.remove(session);

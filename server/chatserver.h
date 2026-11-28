@@ -1,5 +1,9 @@
 #pragma once
 
+#include "protocol.h"
+
+#include <QHash>
+#include <QPair>
 #include <QSet>
 #include <QTcpServer>
 
@@ -25,6 +29,7 @@ private slots:
 private:
     void handleLogin(ClientSession *session, const QByteArray &payload);
     void handleChat(ClientSession *session, const QByteArray &payload);
+    void handleFile(ClientSession *session, proto::Type type, const QByteArray &payload);
 
     void broadcast(const QByteArray &frame);
     void broadcastExcept(const QByteArray &frame, ClientSession *except);
@@ -33,6 +38,7 @@ private:
     int loggedInCount() const;
 
     QSet<ClientSession *> m_sessions;
+    QHash<quint32, QPair<quint32, quint32>> m_fileRoutes;   // fileId -> (发送方 id, 接收方 id)
     quint32 m_nextId = 1;
     QTimer *m_idleTimer = nullptr;
 };
