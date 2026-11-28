@@ -46,6 +46,7 @@ private slots:
 
     void onFileOffer(quint32 id, const QString &fromName,
                      const QString &fileName, qint64 size);
+    void onFileStarted(quint32 id, const QString &fileName, qint64 size);
     void onFileProgress(quint32 id, qint64 transferred, qint64 total);
     void onFileFinished(quint32 id, bool ok, const QString &message);
 

@@ -4,6 +4,9 @@ add_executable(chatclient
     mainwindow.cpp
     chatclient.h
     chatclient.cpp
+    chattypes.h
+    worker.h
+    worker.cpp
     historystore.h
     historystore.cpp
 )

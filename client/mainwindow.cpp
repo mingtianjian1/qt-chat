@@ -61,6 +61,7 @@ MainWindow::MainWindow(QWidget *parent) : QWidget(parent) {
     connect(m_client, &ChatClient::userLeft, this, &MainWindow::onUserLeft);
     connect(m_client, &ChatClient::textReceived, this, &MainWindow::onTextReceived);
     connect(m_client, &ChatClient::errorOccurred, this, &MainWindow::onError);
+    connect(m_client, &ChatClient::fileStarted, this, &MainWindow::onFileStarted);
     connect(m_client, &ChatClient::fileOffer, this, &MainWindow::onFileOffer);
     connect(m_client, &ChatClient::fileProgress, this, &MainWindow::onFileProgress);
     connect(m_client, &ChatClient::fileFinished, this, &MainWindow::onFileFinished);
@@ -536,14 +537,12 @@ void MainWindow::onSendFileClicked() {
     }
 
     const qint64 toId = item->data(Qt::UserRole).toLongLong();
-    const quint32 id = m_client->sendFile(path, toId);
-    if (id == 0) {
-        return;
-    }
-
-    const QFileInfo info(path);
-    appendWidget(createFileWidget(id, "发送文件：" + info.fileName(), info.size(), true));
+    m_client->sendFile(path, toId);
     addNotice("等待 " + item->text() + " 接收");
+}
+
+void MainWindow::onFileStarted(quint32 id, const QString &fileName, qint64 size) {
+    appendWidget(createFileWidget(id, "发送文件：" + fileName, size, true));
 }
 
 QWidget *MainWindow::createFileWidget(quint32 id, const QString &title,
